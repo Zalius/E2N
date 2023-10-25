@@ -1,9 +1,13 @@
-import pandas
-import networkx as nx
-from torch_geometric.utils import to_networkx, from_networkx
-from torch_geometric.data import Data
-import torch
+"""
+Edge to Node Project.
+    Preparation Graph
+"""
 import pickle
+
+import networkx as nx
+import pandas
+import torch
+from torch_geometric.data import Data
 
 if __name__ == '__main__':
     TRAIN_POS_EDGES = pandas.read_csv('/mnt/disk2/ali.rahmati/link2node/data/Raw/ddi/pos_train.csv')
