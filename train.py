@@ -1,43 +1,20 @@
+"""
+Edge to Node Project.
+    Train Model
+"""
+import argparse
 import pickle
 import random
 
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from ogb.linkproppred import Evaluator
 from sklearn.metrics import accuracy_score
-from torch_geometric.nn import GCNConv
+
+from model import GCNBinaryNodeClassifier
 
 random.seed(1234)
-
-
-class GCNBinaryNodeClassifier(nn.Module):
-    def __init__(self, input_dim, hidden_dim, num_classes, dropout_rate=0.3):
-        super(GCNBinaryNodeClassifier, self).__init__()
-
-        self.conv1 = GCNConv(input_dim, hidden_dim // 2)
-        self.conv2 = GCNConv(hidden_dim, hidden_dim)
-        self.conv3 = GCNConv(hidden_dim // 2, num_classes)
-
-        self.dropout = nn.Dropout(dropout_rate)
-        self.initialize_weights()
-
-    def initialize_weights(self):
-        for conv in [self.conv1, self.conv2, self.conv3]:
-            for name, param in conv.named_parameters():
-                if "weight" in name:
-                    nn.init.kaiming_uniform_(param)
-
-    def forward(self, x, edge_index):
-        x = self.conv1(x, edge_index)
-        x = F.relu(x)
-        x = self.dropout(x)
-
-        x = self.conv3(x, edge_index)
-        x = F.relu(x)
-        x = self.dropout(x)
-        return x
 
 
 @torch.no_grad()
@@ -65,7 +42,7 @@ def evaluate(labels, data_mode):
     hits = EVALUATOR.eval({
         'y_pred_pos': pos_scores,
         'y_pred_neg': neg_scores,
-    })[f'hits@{K}']
+    })[f'hits@{args.eval_k}']
 
     print(f"Evaluation for {data_mode}")
     print(f" Loss:> {loss}  , Acc:> {acc}, Hit@20:> {hits}")
@@ -73,23 +50,27 @@ def evaluate(labels, data_mode):
 
 
 if __name__ == '__main__':
-    DEVICE = 'cuda'
-    INPUT_DIM = 512
-    HIDDEN_DIM = 512
-    DROPOUT_RATE = 0.3
-    NUM_EPOCHS = 50
-    NUM_RUN = 2
+
+    parser = argparse.ArgumentParser(description='OGBL-DDI (E2N)')
+    parser.add_argument('--device', type=str, default='cuda')
+    parser.add_argument('--input_dim', type=int, default=512)
+    parser.add_argument('--hidden_dim', type=int, default=512)
+    parser.add_argument('--dropout_rate', type=int, default=0.3)
+    parser.add_argument('--num_epochs', type=int, default=50)
+    parser.add_argument('--num_run', type=int, default=10)
+    parser.add_argument('--eval_k', type=int, default=20)
+    args = parser.parse_args()
+    print(args)
 
     CRITERION = nn.CrossEntropyLoss()
     EVALUATOR = Evaluator(name='ogbl-ddi')
-    K = 20
-    EVALUATOR.K = K
+    EVALUATOR.K = args.eval_k
 
     DATA = pickle.load(
         open("/mnt/disk2/ali.rahmati/link2node/data/Processed/ddi/new_graph_pyg_with_all_mask.pickle", "rb"))
-    DATA = DATA.to(DEVICE)
+    DATA = DATA.to(args.device)
 
-    NEW_TRAIN_MASK = torch.zeros(DATA.edge_index.shape[1], dtype=torch.bool).to(DEVICE)
+    NEW_TRAIN_MASK = torch.zeros(DATA.edge_index.shape[1], dtype=torch.bool).to(args.device)
     NEW_TRAIN_MASK[DATA.train_mask.nonzero()] = True
     TRAIN_EDGE_INDEX = DATA.edge_index[:, NEW_TRAIN_MASK]
 
@@ -103,24 +84,24 @@ if __name__ == '__main__':
     BEST_OF_EACH_RUN_TEST = []
     BEST_OF_EACH_RUN_VAL = []
 
-    for run in range(NUM_RUN):
-        DATA.x = torch.nn.Embedding(DATA.num_nodes, INPUT_DIM).weight.to(DEVICE)
+    for run in range(args.num_run):
+        DATA.x = torch.nn.Embedding(DATA.num_nodes, args.input_dim).weight.to(args.device)
         NUM_CLASSES = len(set(DATA.label))
 
         best_val = []
         best_test = []
 
-        MODEL = GCNBinaryNodeClassifier(INPUT_DIM, HIDDEN_DIM, NUM_CLASSES).to(DEVICE)
+        MODEL = GCNBinaryNodeClassifier(args.input_dim, args.hidden_dim, NUM_CLASSES).to(args.device)
         OPTIMIZER = torch.optim.Adam(MODEL.parameters(), lr=0.01)
 
-        for epoch in range(NUM_EPOCHS):
+        for epoch in range(args.num_epochs):
             MODEL.train()
             OPTIMIZER.zero_grad()
             train_logits = MODEL(DATA.x[DATA.train_mask], TRAIN_EDGE_INDEX)
             train_loss = CRITERION(train_logits.cpu(), torch.tensor(TRAIN_LABELS).cpu())
             train_loss.backward()
             OPTIMIZER.step()
-            print(f'Epoch [{epoch + 1}/{NUM_EPOCHS}], Train Loss: {train_loss.item()}')
+            print(f'Epoch [{epoch + 1}/{args.num_epochs}], Train Loss: {train_loss.item()}')
 
             with torch.no_grad():
                 test_hit = evaluate(labels=TEST_LABELS_CPU, data_mode='test')
